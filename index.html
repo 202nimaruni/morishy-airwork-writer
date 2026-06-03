@@ -227,193 +227,20 @@
 
         <section class="tabpane" id="paneOptions" role="tabpanel" aria-labelledby="tabOptions">
           <div class="card">
-            <div class="card__title">選択項目（カンマ区切り）</div>
-            <div class="card__sub">
-              ここは先に“見た目”を整えるための簡易入力です（後で番号選択UIに拡張します）。
-            </div>
+            <div class="card__title">選択項目</div>
+            <div class="card__sub">各項目を開いて、番号入力の代わりにチェックで選べます。</div>
           </div>
 
-          <details class="accordion">
-            <summary class="accordion__summary">番号一覧を見る（ターゲット/訴求/悩み/安心材料）</summary>
-            <div class="accordion__body">
-              <div class="accordion__section">
-                <div class="accordion__title">採用ターゲット（1〜15）</div>
-                <ol class="numlist">
-                  <li>未経験から新しい仕事に挑戦したい人</li>
-                  <li>経験を活かして転職したい人</li>
-                  <li>接客・販売・飲食などの対人業務に疲れている人</li>
-                  <li>営業経験はあるが、今の商材に興味を持てていない人</li>
-                  <li>黙々とコツコツ作業する方が得意な人</li>
-                  <li>好きな商品・趣味に関わる仕事がしたい人</li>
-                  <li>安定企業で長く働きたい人</li>
-                  <li>収入を上げたい人</li>
-                  <li>休日や働き方を改善したい人</li>
-                  <li>人間関係のストレスが少ない環境で働きたい人</li>
-                  <li>裁量を持って働きたい人</li>
-                  <li>地元・駅近など通いやすさを重視する人</li>
-                  <li>育児・家庭と両立したい人</li>
-                  <li>正社員として安定したいフリーター・離職中の人</li>
-                  <li>キャリアアップ・スキルアップしたい人</li>
-                </ol>
-              </div>
+          <input type="hidden" id="targetMain" />
+          <input type="hidden" id="targetSub" />
+          <input type="hidden" id="appealMain" />
+          <input type="hidden" id="appealSub" />
+          <input type="hidden" id="worries" />
+          <input type="hidden" id="allowFacts" />
+          <input type="hidden" id="applyPolicy" />
+          <input type="hidden" id="catchDirection" />
 
-              <div class="accordion__section">
-                <div class="accordion__title">メイン訴求軸（1〜20）</div>
-                <ol class="numlist">
-                  <li>好きなもの・興味ある商材に関われる</li>
-                  <li>接客なし・電話なし・対人ストレスが少ない</li>
-                  <li>黙々と作業に集中できる</li>
-                  <li>未経験でも始めやすい</li>
-                  <li>経験を正当に活かせる</li>
-                  <li>新規開拓・飛び込みがない</li>
-                  <li>既存顧客中心で関係構築に集中できる</li>
-                  <li>給与が高い・安定収入が得られる</li>
-                  <li>休日が多い・ワークライフバランスが良い</li>
-                  <li>フレックス・直行直帰など働き方の自由度が高い</li>
-                  <li>会社の安定性・知名度がある</li>
-                  <li>駅近・通いやすい</li>
-                  <li>髪色・服装など自由度が高い</li>
-                  <li>研修・マニュアル・サポートがある</li>
-                  <li>裁量が大きく、自分の工夫が活かせる</li>
-                  <li>ノルマやクレーム対応が少ない</li>
-                  <li>手に職・専門性が身につく</li>
-                  <li>地域密着で働ける</li>
-                  <li>チームの雰囲気が良い</li>
-                  <li>入社後のミスマッチが起きにくい仕事のわかりやすさ</li>
-                </ol>
-              </div>
-
-              <div class="accordion__section">
-                <div class="accordion__title">求職者の悩み・本音（1〜20）</div>
-                <ol class="numlist">
-                  <li>接客やお客様対応に疲れている</li>
-                  <li>電話対応やクレーム対応が苦手</li>
-                  <li>営業ノルマや新規開拓に疲れている</li>
-                  <li>今扱っている商材に興味を持てない</li>
-                  <li>人間関係に気を遣いすぎて疲れている</li>
-                  <li>未経験でも本当にできるか不安</li>
-                  <li>正社員として安定したい</li>
-                  <li>給与を上げたい</li>
-                  <li>休みが少なく、生活リズムを整えたい</li>
-                  <li>自分に向いている仕事がわからない</li>
-                  <li>好きなことを仕事にしたい</li>
-                  <li>今の仕事にやりがいや楽しさを感じにくい</li>
-                  <li>将来のキャリアが見えない</li>
-                  <li>体力的に無理のない仕事をしたい</li>
-                  <li>もっと自分のペースで働きたい</li>
-                  <li>細かい作業や確認作業の方が得意</li>
-                  <li>人と話すより、もの・データ・商品と向き合う方が好き</li>
-                  <li>これまでの経験を無駄にしたくない</li>
-                  <li>大きすぎる会社より、裁量ある環境で働きたい</li>
-                  <li>長く安心して働ける職場を探している</li>
-                </ol>
-              </div>
-
-              <div class="accordion__section">
-                <div class="accordion__title">入れてよい安心材料（1〜40）</div>
-                <ol class="numlist numlist--cols">
-                  <li>未経験歓迎</li>
-                  <li>業界未経験歓迎</li>
-                  <li>学歴不問</li>
-                  <li>ブランクOK</li>
-                  <li>第二新卒歓迎</li>
-                  <li>既存顧客中心</li>
-                  <li>新規飛び込みなし</li>
-                  <li>テレアポなし</li>
-                  <li>個人ノルマなし</li>
-                  <li>接客なし</li>
-                  <li>電話対応なし</li>
-                  <li>営業トークなし</li>
-                  <li>クレーム対応なし</li>
-                  <li>一人作業が多い</li>
-                  <li>黙々作業が多い</li>
-                  <li>マニュアルあり</li>
-                  <li>商品データ・システムあり</li>
-                  <li>研修あり</li>
-                  <li>OJTあり</li>
-                  <li>先輩に相談できる</li>
-                  <li>試用期間中も条件同じ</li>
-                  <li>残業月20時間以内</li>
-                  <li>土日祝休み</li>
-                  <li>年間休日120日以上</li>
-                  <li>長期休暇あり</li>
-                  <li>フレックス制度あり</li>
-                  <li>直行直帰可能</li>
-                  <li>転勤なし</li>
-                  <li>駅徒歩5分以内</li>
-                  <li>車通勤可</li>
-                  <li>服装自由</li>
-                  <li>髪色自由</li>
-                  <li>ピアス・ネイル自由</li>
-                  <li>住宅手当あり</li>
-                  <li>家族手当あり</li>
-                  <li>退職金あり</li>
-                  <li>賞与あり</li>
-                  <li>昇給あり</li>
-                  <li>交通費支給</li>
-                  <li>入社時引越し補助あり</li>
-                </ol>
-              </div>
-
-              <div class="accordion__section">
-                <div class="accordion__title">応募方針（1〜3）</div>
-                <ol class="numlist">
-                  <li>応募数を最大化したい</li>
-                  <li>応募数よりもマッチ度を重視したい</li>
-                  <li>応募数とマッチ度のバランスを取りたい</li>
-                </ol>
-              </div>
-
-              <div class="accordion__section">
-                <div class="accordion__title">キャッチコピーの方向性（1〜8）</div>
-                <ol class="numlist">
-                  <li>求職者の悩みを代弁する（例：接客に疲れたあなたへ。）</li>
-                  <li>好きなものを仕事にする魅力を打ち出す（例：「好きなもの」を売る営業は、こんなにも強い。）</li>
-                  <li>経験を肯定する（例：その営業経験、もっと好きになれる商材で活かしませんか？）</li>
-                  <li>働き方・条件の良さを打ち出す（例：年間休日120日以上。無理なく長く続けられる仕事です。）</li>
-                  <li>転職後の変化を打ち出す（例：人と話す毎日から、コツコツ集中できる毎日へ。）</li>
-                  <li>安定性を打ち出す（例：業界トップクラスの安定企業で、腰を据えて働く。）</li>
-                  <li>未経験からの挑戦を打ち出す（例：知識ゼロから、安心して始められる正社員の仕事。）</li>
-                  <li>AIに最適な方向性を選ばせる</li>
-                </ol>
-              </div>
-            </div>
-          </details>
-
-          <div class="formgrid">
-            <label class="field">
-              <div class="field__label">主ターゲット（例：1）</div>
-              <input class="input" id="targetMain" placeholder="例：1" />
-            </label>
-            <label class="field">
-              <div class="field__label">副ターゲット（例：6,10）</div>
-              <input class="input" id="targetSub" placeholder="例：6,10" />
-            </label>
-            <label class="field">
-              <div class="field__label">主訴求（例：2）</div>
-              <input class="input" id="appealMain" placeholder="例：2" />
-            </label>
-            <label class="field">
-              <div class="field__label">副訴求（例：3,14）</div>
-              <input class="input" id="appealSub" placeholder="例：3,14" />
-            </label>
-            <label class="field">
-              <div class="field__label">求職者の悩み（例：1,5,6）</div>
-              <input class="input" id="worries" placeholder="例：1,5,6" />
-            </label>
-            <label class="field">
-              <div class="field__label">入れてよい安心材料（例：1,10,11）</div>
-              <input class="input" id="allowFacts" placeholder="例：1,10,11" />
-            </label>
-            <label class="field">
-              <div class="field__label">応募方針（1/2/3）</div>
-              <input class="input" id="applyPolicy" placeholder="例：3" />
-            </label>
-            <label class="field">
-              <div class="field__label">キャッチコピー方向性（1〜8）</div>
-              <input class="input" id="catchDirection" placeholder="例：8" />
-            </label>
-          </div>
+          <div id="selectionUiRoot"></div>
 
           <label class="field">
             <div class="field__label">避けたい表現</div>
