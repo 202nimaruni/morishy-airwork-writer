@@ -1,0 +1,16 @@
+{
+  "name": "求人作成AI【モリシー】",
+  "short_name": "モリシー",
+  "description": "AirWork掲載用の求人原稿を作成するWebアプリ",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "./morishy-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
