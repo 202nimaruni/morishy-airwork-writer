@@ -1,0 +1,26 @@
+#!/bin/bash
+# 求人作成AI【モリシー】 — 公開用デプロイスクリプト
+set -euo pipefail
+cd "$(dirname "$0")"
+
+echo "=== 求人作成AI【モリシー】 デプロイ ==="
+echo ""
+echo "このアプリは静的HTMLのため、以下のいずれかで公開できます。"
+echo ""
+echo "【A】Netlify（おすすめ・無料）"
+echo "  1. https://app.netlify.com/drop にアクセス"
+echo "  2. このフォルダ（airwork-writer）をドラッグ＆ドロップ"
+echo "  3. 表示された URL（例: https://xxxx.netlify.app）を共有"
+echo ""
+echo "【B】GitHub Pages"
+echo "  1. GitHub にリポジトリを作成"
+echo "  2. git init && git add . && git commit && git push"
+echo "  3. Settings → Pages → Deploy from branch: main / root"
+echo ""
+echo "【C】Vercel"
+echo "  1. https://vercel.com でアカウント作成"
+echo "  2. Import → このフォルダをアップロード"
+echo ""
+echo "【D】一時公開（cloudflared）"
+echo "  ./scripts/tunnel.sh を実行 → 表示された URL を共有"
+echo ""
