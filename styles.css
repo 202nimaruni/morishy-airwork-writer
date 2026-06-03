@@ -211,6 +211,48 @@ body{
 .accordion__body{ margin-top: 10px; }
 .accordion__section{ margin: 12px 0; }
 .accordion__title{ font-size: 12px; font-weight: 760; color: rgba(255,255,255,0.86); margin-bottom: 8px; }
+
+.optionGroup{
+  border: 1px solid var(--border);
+  border-radius: var(--radius2);
+  background: rgba(255,255,255,0.03);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.optionGroup__summary{
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 760;
+  list-style: none;
+}
+.optionGroup__summary::-webkit-details-marker{ display: none; }
+.optionGroup__body{ padding: 0 12px 12px; }
+.optionGroup__hint{
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0 6px;
+}
+.checkgrid{ display: grid; gap: 8px; }
+.checkgrid--dense{
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.checkitem{
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  cursor: pointer;
+}
+.checkitem input{ margin-top: 3px; flex: 0 0 auto; }
+.checkitem span{ line-height: 1.45; font-size: 13px; }
+.checkitem:has(input:checked){
+  border-color: rgba(6,182,212,0.55);
+  background: rgba(29,78,216,0.14);
+  box-shadow: var(--glow);
+}
 .numlist{
   margin: 0 0 0 18px;
   padding: 0;
