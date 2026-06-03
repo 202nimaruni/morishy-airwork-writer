@@ -37,7 +37,7 @@ function getOpenAIApiKey() {
   return key;
 }
 
-async function aiExtractFieldsFromText(rawText) {
+async function aiExtractFieldsFromText(rawText, { smartFill = false } = {}) {
   const apiKey = getOpenAIApiKey();
   if (!apiKey) throw new Error("APIキー未設定");
 
@@ -70,12 +70,17 @@ async function aiExtractFieldsFromText(rawText) {
     team: "チーム人数・年齢層",
   };
 
-  const prompt = `あなたは求人ページから事実情報だけを抽出するアシスタントです。
+  const inferenceRule = smartFill
+    ? `- 1日の流れ(dailyFlow)、会社の事業内容(business)、会社の強み・実績(achievements)、職場の雰囲気(atmosphere)、チーム(team)、商品・サービス(productService)、関わる相手(stakeholders)は、本文から合理的に読み取れる範囲で要約して埋める（憶測の誇張は禁止）。
+- 給与・勤務地など数値・条件は推測しない。`
+    : `- 推測で補完しない。書かれていないものは空文字にする。`;
+
+  const prompt = `あなたは求人ページから情報を抽出するアシスタントです。
 以下のテキストから、次の項目に対応する値を抽出してください。
 
 【重要ルール】
-- 推測で補完しない。書かれていないものは空文字にする。
-- 誇張・要約しない（原文の言い方をできるだけ保持）。
+${inferenceRule}
+- 誇張表現は避け、原文ベースで書く。
 - 仕事内容/業務の流れ/研修などは改行を含むテキストでOK。
 - 返答はJSONのみ。コードブロック禁止。
 
@@ -136,81 +141,289 @@ function normalizeText(text) {
 }
 
 function pickAfterLabel(text, labels) {
-  // labels: ["給与", "給料"] etc
-  const t = normalizeText(text);
-  const lines = t.split("\n").map((x) => x.trim());
-  const labelSet = new Set(labels);
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Pattern: "給与：xxx" / "給与: xxx"
-    for (const lab of labelSet) {
-      const m = line.match(new RegExp(`^${escapeRegExp(lab)}\\s*[：:]\\s*(.+)$`));
-      if (m?.[1]) return m[1].trim();
-    }
-
-    // Pattern: "給与" then next non-empty line is the value
-    if (labelSet.has(line)) {
-      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-        const v = lines[j].trim();
-        if (v) return v;
-      }
-    }
-  }
-  return "";
+  const section = pickSectionAfterLabel(text, labels, { maxLines: 3 });
+  if (!section) return "";
+  const first = section.split("\n")[0] || "";
+  return first.replace(/\s+/g, " ").trim();
 }
 
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const SECTION_HEADING_HINTS = [
+  "給与",
+  "勤務地",
+  "雇用形態",
+  "仕事内容",
+  "応募",
+  "資格",
+  "福利厚生",
+  "休日",
+  "勤務時間",
+  "会社概要",
+  "事業内容",
+  "1日の流れ",
+  "選考",
+  "待遇",
+  "アクセス",
+];
+
+function isSectionHeading(line) {
+  if (!line) return false;
+  if (/^【.+】$/.test(line)) return true;
+  if (/^[■●◆▪]/.test(line)) return true;
+  if (line.length <= 24 && /[：:]$/.test(line)) return true;
+  return SECTION_HEADING_HINTS.some(
+    (k) => line === k || line.startsWith(`${k}：`) || line.startsWith(`${k}:`)
+  );
+}
+
+function pickSectionAfterLabel(text, labels, { maxLines = 20 } = {}) {
+  const lines = normalizeText(text)
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  for (let i = 0; i < lines.length; i++) {
+    for (const lab of labels) {
+      const line = lines[i];
+      let inline = "";
+      let start = -1;
+      const m = line.match(new RegExp(`^${escapeRegExp(lab)}\\s*[：:]\\s*(.*)$`));
+      if (m) {
+        inline = (m[1] || "").trim();
+        start = inline ? i : i + 1;
+      } else if (line === lab || line.replace(/\s/g, "") === lab.replace(/\s/g, "")) {
+        start = i + 1;
+      }
+      if (start < 0) continue;
+
+      const parts = inline ? [inline] : [];
+      for (let j = start; j < lines.length && parts.length < maxLines; j++) {
+        if (parts.length && isSectionHeading(lines[j])) break;
+        parts.push(lines[j]);
+      }
+      const joined = parts.join("\n").trim();
+      if (joined.length > 2) return joined;
+    }
+  }
+  return "";
+}
+
+function extractFromHtml(html) {
+  const out = {};
+  if (!html) return out;
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(String(html), "text/html");
+  } catch {
+    return out;
+  }
+
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const s of scripts) {
+    try {
+      const data = JSON.parse(s.textContent || "");
+      const nodes = Array.isArray(data) ? data : [data];
+      for (const node of nodes) {
+        const job = node?.["@type"] === "JobPosting" ? node : node?.["@graph"]?.find?.((x) => x?.["@type"] === "JobPosting");
+        if (!job) continue;
+        if (job.title) out.jobTitle = String(job.title);
+        if (job.employmentType) out.employmentType = String(job.employmentType);
+        if (job.baseSalary?.value?.value) out.salary = `${job.baseSalary.value.value}${job.baseSalary.value.unitText || ""}`;
+        if (job.jobLocation?.address) {
+          const a = job.jobLocation.address;
+          out.workAddress = [a.addressLocality, a.streetAddress, a.postalCode].filter(Boolean).join(" ");
+        }
+        if (job.description) {
+          const desc = stripHtmlToText(String(job.description));
+          if (desc.length > 30) out.mainDuties = desc.slice(0, 4000);
+        }
+        if (job.hiringOrganization?.name) out.companyName = String(job.hiringOrganization.name);
+      }
+    } catch {
+      /* ignore malformed JSON-LD */
+    }
+  }
+
+  const ogTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute("content");
+  if (!out.jobTitle && ogTitle) out.jobTitle = ogTitle.trim();
+  return out;
+}
+
+function enrichExtractedFromContext(text, out) {
+  const enriched = { ...out };
+  const fill = (key, labels, { minLen = 4, maxLines = 22 } = {}) => {
+    if (enriched[key]) return;
+    const v = pickSectionAfterLabel(text, labels, { maxLines });
+    if (v && v.length >= minLen) enriched[key] = v;
+  };
+
+  fill("mainDuties", ["仕事内容", "主な仕事内容", "業務内容", "担当業務", "お仕事の内容"], { minLen: 8, maxLines: 30 });
+  fill("dailyFlow", ["1日の流れ", "一日の流れ", "業務の流れ", "タイムスケジュール", "スケジュール例", "仕事の流れ"], {
+    minLen: 6,
+    maxLines: 18,
+  });
+  fill("business", ["会社の事業内容", "事業内容", "会社概要", "企業概要", "私たちについて", "事業領域"], {
+    minLen: 8,
+    maxLines: 16,
+  });
+  fill("achievements", ["会社の強み", "強み", "実績", "特徴", "選ばれる理由", "当社の魅力"], { minLen: 6, maxLines: 14 });
+  fill("training", ["研修", "教育", "サポート体制", "入社後の研修", "育成"], { minLen: 4, maxLines: 12 });
+  fill("productService", ["扱う商品", "商品・サービス", "取り扱い商品", "商材"], { minLen: 3, maxLines: 6 });
+  fill("stakeholders", ["関わる相手", "仕事で関わる相手", "お客様", "取引先"], { minLen: 3, maxLines: 6 });
+  fill("atmosphere", ["職場の雰囲気", "職場環境", "働く環境", "チームの雰囲気"], { minLen: 4, maxLines: 8 });
+  fill("team", ["チーム", "チーム構成", "人数", "メンバー"], { minLen: 3, maxLines: 6 });
+  fill("constraints", ["応募資格", "必須条件", "歓迎条件", "求める人物像"], { minLen: 4, maxLines: 10 });
+  fill("displayName", ["店舗名", "部署名", "事業部", "拠点"], { minLen: 2, maxLines: 3 });
+
+  if (!enriched.companyName) {
+    const m = text.match(/(?:株式会社|有限会社|合同会社)[^\n、。]{1,40}/);
+    if (m) enriched.companyName = m[0].trim();
+  }
+
+  return enriched;
+}
+
+function mergeExtracted(base, extra) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(extra || {})) {
+    if (!v) continue;
+    if (!out[k] || String(out[k]).length < String(v).length) out[k] = v;
+  }
+  return out;
+}
+
+function normalizeExtractedFields(out) {
+  const singleLineKeys = new Set([
+    "companyName",
+    "displayName",
+    "jobTitle",
+    "employmentType",
+    "workAddress",
+    "access",
+    "transfer",
+    "salary",
+    "fixedOvertime",
+    "bonusRaise",
+    "workHours",
+    "overtimeHours",
+    "holidays",
+    "benefits",
+    "trialPeriod",
+    "clients",
+    "productService",
+    "stakeholders",
+    "atmosphere",
+    "team",
+    "constraints",
+  ]);
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v !== "string") continue;
+    out[k] = singleLineKeys.has(k) ? v.replace(/\s+/g, " ").trim() : v.replace(/\r\n/g, "\n").trim();
+  }
+  return out;
+}
+
+async function fetchJobPageContent(url) {
+  const attempts = [
+    async () => {
+      const r = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`);
+      if (!r.ok) throw new Error(`jina HTTP ${r.status}`);
+      const text = await r.text();
+      if (!text || text.length < 120) throw new Error("jina empty");
+      return { text, html: "" };
+    },
+    async () => {
+      const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+      if (!r.ok) throw new Error(`allorigins HTTP ${r.status}`);
+      const html = await r.text();
+      if (!html || html.length < 120) throw new Error("allorigins empty");
+      return { text: stripHtmlToText(html), html };
+    },
+    async () => {
+      const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+      if (!r.ok) throw new Error(`corsproxy HTTP ${r.status}`);
+      const html = await r.text();
+      if (!html || html.length < 120) throw new Error("corsproxy empty");
+      return { text: stripHtmlToText(html), html };
+    },
+    async () => {
+      const r = await fetch(url, { method: "GET" });
+      if (!r.ok) throw new Error(`direct HTTP ${r.status}`);
+      const html = await r.text();
+      return { text: stripHtmlToText(html), html };
+    },
+  ];
+
+  let lastErr = null;
+  for (const fn of attempts) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("URL取得に失敗");
+}
+
+function runExtractionPipeline({ text, html, url, smartFill = true }) {
+  let out = extractFromText(text, { url });
+  out = mergeExtracted(out, extractFromHtml(html));
+  out = enrichExtractedFromContext(text, out);
+  return normalizeExtractedFields(out);
+}
+
 function extractFromText(raw, { url } = {}) {
   const text = normalizeText(raw);
   const out = {};
 
-  // Basic
-  out.companyName =
-    pickAfterLabel(text, ["会社名", "企業名", "法人名"]) ||
-    "";
-  out.jobTitle =
-    pickAfterLabel(text, ["職種", "職種名", "募集職種", "仕事内容（職種）"]) ||
-    "";
-  out.employmentType = pickAfterLabel(text, ["雇用形態"]) || "";
-  out.salary = pickAfterLabel(text, ["給与", "給料", "報酬"]) || "";
-  out.workAddress = pickAfterLabel(text, ["勤務地", "勤務地住所", "勤務地（住所）", "住所"]) || "";
-  out.access = pickAfterLabel(text, ["アクセス", "最寄り駅", "交通", "通勤"]) || "";
-  out.workHours = pickAfterLabel(text, ["勤務時間", "勤務時間帯", "勤務"] ) || "";
-  out.overtimeHours = pickAfterLabel(text, ["残業", "残業時間"]) || "";
-  out.holidays = pickAfterLabel(text, ["休日", "休日休暇", "休暇"]) || "";
-  out.benefits = pickAfterLabel(text, ["福利厚生", "待遇", "制度"]) || "";
-  out.trialPeriod = pickAfterLabel(text, ["試用期間", "研修期間", "試用・研修期間"]) || "";
-  out.fixedOvertime = pickAfterLabel(text, ["固定残業", "固定残業代"]) || "";
-  out.bonusRaise = pickAfterLabel(text, ["賞与", "昇給", "賞与・昇給"]) || "";
-  out.transfer = pickAfterLabel(text, ["転勤"]) || "";
-  out.clients = pickAfterLabel(text, ["取引先", "顧客層", "取引先・顧客層"]) || "";
+  out.companyName = pickAfterLabel(text, ["会社名", "企業名", "法人名", "採用企業", "求人企業"]);
+  out.displayName = pickAfterLabel(text, ["店舗名", "部署名", "事業部名", "拠点", "求人表示名"]);
+  out.jobTitle = pickAfterLabel(text, ["職種", "職種名", "募集職種", "ポジション", "募集ポジション"]);
+  out.employmentType = pickAfterLabel(text, ["雇用形態", "雇用区分"]);
+  out.salary = pickAfterLabel(text, ["給与", "給料", "報酬", "想定年収", "年収"]);
+  out.workAddress = pickAfterLabel(text, ["勤務地", "勤務地住所", "勤務地（住所）", "住所", "勤務地詳細"]);
+  out.access = pickAfterLabel(text, ["アクセス", "最寄り駅", "交通", "通勤", "勤務地備考"]);
+  out.workHours = pickAfterLabel(text, ["勤務時間", "勤務時間帯", "就業時間"]);
+  out.overtimeHours = pickAfterLabel(text, ["残業", "残業時間", "時間外"]);
+  out.holidays = pickAfterLabel(text, ["休日", "休日休暇", "休暇", "休み"]);
+  out.benefits = pickAfterLabel(text, ["福利厚生", "待遇", "制度", "手当"]);
+  out.trialPeriod = pickAfterLabel(text, ["試用期間", "研修期間", "試用・研修期間"]);
+  out.fixedOvertime = pickAfterLabel(text, ["固定残業", "固定残業代"]);
+  out.bonusRaise = pickAfterLabel(text, ["賞与", "昇給", "賞与・昇給"]);
+  out.transfer = pickAfterLabel(text, ["転勤"]);
+  out.clients = pickAfterLabel(text, ["取引先", "顧客層", "取引先・顧客層"]);
 
-  // Longer fields (heuristic)
-  const duties = pickAfterLabel(text, ["仕事内容", "主な仕事内容", "業務内容"]);
-  if (duties && duties.length > 10) out.mainDuties = duties;
+  const sectionMap = [
+    ["mainDuties", ["仕事内容", "主な仕事内容", "業務内容", "お仕事の内容"]],
+    ["dailyFlow", ["1日の流れ", "一日の流れ", "業務の流れ", "仕事の流れ"]],
+    ["business", ["会社の事業内容", "事業内容", "会社概要"]],
+    ["achievements", ["会社の強み", "強み", "実績", "特徴"]],
+    ["training", ["研修", "教育", "サポート体制", "入社後の研修"]],
+    ["productService", ["扱う商品", "商品・サービス", "商材"]],
+    ["stakeholders", ["関わる相手", "仕事で関わる相手"]],
+    ["atmosphere", ["職場の雰囲気", "職場環境"]],
+    ["team", ["チーム", "チーム人数"]],
+    ["constraints", ["応募資格", "必須条件", "歓迎条件"]],
+  ];
+  for (const [key, labels] of sectionMap) {
+    const v = pickSectionAfterLabel(text, labels, { maxLines: key === "mainDuties" ? 30 : 18 });
+    if (v) out[key] = v;
+  }
 
-  const training = pickAfterLabel(text, ["研修", "教育", "サポート", "入社後の研修", "サポート体制"]);
-  if (training && training.length > 6) out.training = training;
-
-  // If companyName empty, try title-like cues from URL
   if (!out.companyName && url) {
     try {
       const u = new URL(url);
-      if (u.hostname) out.companyName = "";
-    } catch {}
+      const host = u.hostname.replace(/^www\./, "").split(".")[0];
+      if (host && host.length > 2) out.companyName = "";
+    } catch {
+      /* ignore */
+    }
   }
 
-  // Clean: remove obvious noise
-  for (const k of Object.keys(out)) {
-    const v = out[k];
-    if (typeof v === "string") out[k] = v.replace(/\s+/g, " ").trim();
-  }
-  return out;
+  return normalizeExtractedFields(out);
 }
 
 function applyImportedFields(fields, { onlyEmpty }) {
@@ -232,7 +445,15 @@ function applyImportedFields(fields, { onlyEmpty }) {
     trialPeriod: "trialPeriod",
     clients: "clients",
     mainDuties: "mainDuties",
+    productService: "productService",
+    stakeholders: "stakeholders",
+    constraints: "constraints",
+    dailyFlow: "dailyFlow",
     training: "training",
+    business: "business",
+    achievements: "achievements",
+    atmosphere: "atmosphere",
+    team: "team",
   };
 
   const touched = [];
@@ -287,6 +508,7 @@ function maskKey(key) {
 }
 
 function readForm() {
+  if (document.getElementById("selectionUiRoot")) syncSelectionHiddenFields();
   const styleType = document.querySelector("#styleType .segmented__item.is-active")?.dataset?.value ?? "MVV型";
   const styleStrength =
     document.querySelector("#styleStrength .segmented__item.is-active")?.dataset?.value ?? "標準";
@@ -383,6 +605,7 @@ function writeForm(d) {
   $("catchDirection").value = d.catchDirection ?? "";
   $("avoidPhrases").value = d.avoidPhrases ?? "";
   $("cannotAssert").value = d.cannotAssert ?? "";
+  if (document.getElementById("selectionUiRoot")) applySelectionValuesToCheckboxes(d);
 }
 
 function getHistory() {
@@ -2264,6 +2487,300 @@ function duplicateDraft(id) {
   setTimeout(() => setExportNote(""), 1500);
 }
 
+const SELECTION_GROUPS = [
+  {
+    id: "targets",
+    title: "採用ターゲット",
+    items: [
+      "未経験から新しい仕事に挑戦したい人",
+      "経験を活かして転職したい人",
+      "接客・販売・飲食などの対人業務に疲れている人",
+      "営業経験はあるが、今の商材に興味を持てていない人",
+      "黙々とコツコツ作業する方が得意な人",
+      "好きな商品・趣味に関わる仕事がしたい人",
+      "安定企業で長く働きたい人",
+      "収入を上げたい人",
+      "休日や働き方を改善したい人",
+      "人間関係のストレスが少ない環境で働きたい人",
+      "裁量を持って働きたい人",
+      "地元・駅近など通いやすさを重視する人",
+      "育児・家庭と両立したい人",
+      "正社員として安定したいフリーター・離職中の人",
+      "キャリアアップ・スキルアップしたい人",
+    ],
+    mainField: "targetMain",
+    subField: "targetSub",
+    subMax: 5,
+  },
+  {
+    id: "appeals",
+    title: "メイン訴求軸",
+    items: [
+      "好きなもの・興味ある商材に関われる",
+      "接客なし・電話なし・対人ストレスが少ない",
+      "黙々と作業に集中できる",
+      "未経験でも始めやすい",
+      "経験を正当に活かせる",
+      "新規開拓・飛び込みがない",
+      "既存顧客中心で関係構築に集中できる",
+      "給与が高い・安定収入が得られる",
+      "休日が多い・ワークライフバランスが良い",
+      "フレックス・直行直帰など働き方の自由度が高い",
+      "会社の安定性・知名度がある",
+      "駅近・通いやすい",
+      "髪色・服装など自由度が高い",
+      "研修・マニュアル・サポートがある",
+      "裁量が大きく、自分の工夫が活かせる",
+      "ノルマやクレーム対応が少ない",
+      "手に職・専門性が身につく",
+      "地域密着で働ける",
+      "チームの雰囲気が良い",
+      "入社後のミスマッチが起きにくい仕事のわかりやすさ",
+    ],
+    mainField: "appealMain",
+    subField: "appealSub",
+    subMax: 5,
+  },
+  {
+    id: "worries",
+    title: "求職者の悩み・本音（最大3）",
+    items: [
+      "接客やお客様対応に疲れている",
+      "電話対応やクレーム対応が苦手",
+      "営業ノルマや新規開拓に疲れている",
+      "今扱っている商材に興味を持てない",
+      "人間関係に気を遣いすぎて疲れている",
+      "未経験でも本当にできるか不安",
+      "正社員として安定したい",
+      "給与を上げたい",
+      "休みが少なく、生活リズムを整えたい",
+      "自分に向いている仕事がわからない",
+      "好きなことを仕事にしたい",
+      "今の仕事にやりがいや楽しさを感じにくい",
+      "将来のキャリアが見えない",
+      "体力的に無理のない仕事をしたい",
+      "もっと自分のペースで働きたい",
+      "細かい作業や確認作業の方が得意",
+      "人と話すより、もの・データ・商品と向き合う方が好き",
+      "これまでの経験を無駄にしたくない",
+      "大きすぎる会社より、裁量ある環境で働きたい",
+      "長く安心して働ける職場を探している",
+    ],
+    subField: "worries",
+    subMax: 3,
+  },
+  {
+    id: "allowFacts",
+    title: "入れてよい安心材料",
+    items: [
+      "未経験歓迎",
+      "業界未経験歓迎",
+      "学歴不問",
+      "ブランクOK",
+      "第二新卒歓迎",
+      "既存顧客中心",
+      "新規飛び込みなし",
+      "テレアポなし",
+      "個人ノルマなし",
+      "接客なし",
+      "電話対応なし",
+      "営業トークなし",
+      "クレーム対応なし",
+      "一人作業が多い",
+      "黙々作業が多い",
+      "マニュアルあり",
+      "商品データ・システムあり",
+      "研修あり",
+      "OJTあり",
+      "先輩に相談できる",
+      "試用期間中も条件同じ",
+      "残業月20時間以内",
+      "土日祝休み",
+      "年間休日120日以上",
+      "長期休暇あり",
+      "フレックス制度あり",
+      "直行直帰可能",
+      "転勤なし",
+      "駅徒歩5分以内",
+      "車通勤可",
+      "服装自由",
+      "髪色自由",
+      "ピアス・ネイル自由",
+      "住宅手当あり",
+      "家族手当あり",
+      "退職金あり",
+      "賞与あり",
+      "昇給あり",
+      "交通費支給",
+      "入社時引越し補助あり",
+    ],
+    subField: "allowFacts",
+    subMax: 12,
+  },
+  {
+    id: "applyPolicy",
+    title: "応募方針",
+    items: ["応募数を最大化したい", "応募数よりもマッチ度を重視したい", "応募数とマッチ度のバランスを取りたい"],
+    mainField: "applyPolicy",
+    subMax: 0,
+  },
+  {
+    id: "catchDirection",
+    title: "キャッチコピーの方向性",
+    items: [
+      "求職者の悩みを代弁する",
+      "好きなものを仕事にする魅力を打ち出す",
+      "経験を肯定する",
+      "働き方・条件の良さを打ち出す",
+      "転職後の変化を打ち出す",
+      "安定性を打ち出す",
+      "未経験からの挑戦を打ち出す",
+      "AIに最適な方向性を選ばせる",
+    ],
+    mainField: "catchDirection",
+    subMax: 0,
+  },
+];
+
+function parseNumsCsv(s) {
+  return String(s || "")
+    .split(/[,、\s]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function syncSelectionHiddenFields() {
+  const pickMain = (field) => {
+    const el = document.querySelector(`input[data-sel-main="${field}"]:checked`);
+    const hidden = document.getElementById(field);
+    if (hidden) hidden.value = el ? el.value : "";
+  };
+  const pickSub = (field) => {
+    const vals = [...document.querySelectorAll(`input[data-sel-sub="${field}"]:checked`)].map((x) => x.value);
+    const hidden = document.getElementById(field);
+    if (hidden) hidden.value = vals.join(",");
+  };
+
+  pickMain("targetMain");
+  pickSub("targetSub");
+  pickMain("appealMain");
+  pickSub("appealSub");
+  pickSub("worries");
+  pickSub("allowFacts");
+  pickMain("applyPolicy");
+  pickMain("catchDirection");
+}
+
+function applySelectionValuesToCheckboxes(d) {
+  const setMain = (field, val) => {
+    document.querySelectorAll(`input[data-sel-main="${field}"]`).forEach((inp) => {
+      inp.checked = inp.value === String(val || "").trim();
+    });
+  };
+  const setSub = (field, val) => {
+    const set = new Set(parseNumsCsv(val));
+    document.querySelectorAll(`input[data-sel-sub="${field}"]`).forEach((inp) => {
+      inp.checked = set.has(inp.value);
+    });
+  };
+  setMain("targetMain", d.targetMain);
+  setSub("targetSub", d.targetSub);
+  setMain("appealMain", d.appealMain);
+  setSub("appealSub", d.appealSub);
+  setSub("worries", d.worries);
+  setSub("allowFacts", d.allowFacts);
+  setMain("applyPolicy", d.applyPolicy);
+  setMain("catchDirection", d.catchDirection);
+  syncSelectionHiddenFields();
+}
+
+function initSelectionUi() {
+  const root = document.getElementById("selectionUiRoot");
+  if (!root) return;
+  root.innerHTML = "";
+
+  for (const group of SELECTION_GROUPS) {
+    const wrap = document.createElement("details");
+    wrap.className = "optionGroup";
+    wrap.open = group.id === "targets";
+
+    const summary = document.createElement("summary");
+    summary.className = "optionGroup__summary";
+    summary.textContent = group.title;
+    wrap.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "optionGroup__body";
+
+    if (group.mainField) {
+      const mainLabel = document.createElement("div");
+      mainLabel.className = "optionGroup__hint";
+      mainLabel.textContent = "主（1つ選択）";
+      body.appendChild(mainLabel);
+      const mainGrid = document.createElement("div");
+      mainGrid.className = "checkgrid";
+      group.items.forEach((label, idx) => {
+        const n = String(idx + 1);
+        const item = document.createElement("label");
+        item.className = "checkitem";
+        item.innerHTML = `<input type="radio" name="sel_${group.mainField}" data-sel-main="${group.mainField}" value="${n}" /><span><b>${n}.</b> ${escapeHtml(label)}</span>`;
+        mainGrid.appendChild(item);
+      });
+      body.appendChild(mainGrid);
+    }
+
+    if (group.subField) {
+      const subLabel = document.createElement("div");
+      subLabel.className = "optionGroup__hint";
+      subLabel.textContent = group.subMax
+        ? `副・複数選択（最大${group.subMax}）`
+        : "該当するものをチェック";
+      body.appendChild(subLabel);
+      const subGrid = document.createElement("div");
+      subGrid.className = "checkgrid checkgrid--dense";
+      group.items.forEach((label, idx) => {
+        const n = String(idx + 1);
+        const item = document.createElement("label");
+        item.className = "checkitem";
+        item.innerHTML = `<input type="checkbox" data-sel-sub="${group.subField}" data-max="${group.subMax || 99}" value="${n}" /><span><b>${n}.</b> ${escapeHtml(label)}</span>`;
+        subGrid.appendChild(item);
+      });
+      body.appendChild(subGrid);
+    }
+
+    wrap.appendChild(body);
+    root.appendChild(wrap);
+  }
+
+  root.addEventListener("change", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (t.type === "checkbox" && t.dataset.selSub) {
+      const max = Number(t.dataset.max || 99);
+      const checked = [...document.querySelectorAll(`input[data-sel-sub="${t.dataset.selSub}"]:checked`)];
+      if (checked.length > max) {
+        t.checked = false;
+        setImportNote(`最大${max}件まで選択できます`);
+        setTimeout(() => setImportNote(""), 1800);
+      }
+    }
+    syncSelectionHiddenFields();
+    renderPreview(readForm());
+  });
+
+  const draft = {
+    targetMain: document.getElementById("targetMain")?.value || "",
+    targetSub: document.getElementById("targetSub")?.value || "",
+    appealMain: document.getElementById("appealMain")?.value || "",
+    appealSub: document.getElementById("appealSub")?.value || "",
+    worries: document.getElementById("worries")?.value || "",
+    allowFacts: document.getElementById("allowFacts")?.value || "",
+    applyPolicy: document.getElementById("applyPolicy")?.value || "",
+    catchDirection: document.getElementById("catchDirection")?.value || "",
+  };
+  applySelectionValuesToCheckboxes(draft);
+}
+
 function init() {
   // Tabs
   $("tabBasic").addEventListener("click", () => setActiveTab("tabBasic", "paneBasic"));
@@ -2394,11 +2911,12 @@ function init() {
       setPasteNote("貼り付け内容が空です");
       return;
     }
-    const extracted = extractFromText(stripHtmlToText(raw));
+    const text = normalizeText(stripHtmlToText(raw));
+    const extracted = runExtractionPipeline({ text, html: raw, smartFill: true });
     applyImportedFields(extracted, { onlyEmpty: importOnlyEmpty() });
     renderPreview(readForm());
-    setPasteNote("抽出してフォームに反映しました");
-    setTimeout(() => setPasteNote(""), 1500);
+    setPasteNote("抽出してフォームに反映しました（不足項目は本文から補完）");
+    setTimeout(() => setPasteNote(""), 1800);
   });
 
   $("btnExtractPasteAi").addEventListener("click", async () => {
@@ -2410,7 +2928,7 @@ function init() {
     setPasteNote("AIで抽出中…");
     try {
       const text = normalizeText(stripHtmlToText(raw));
-      const extracted = await aiExtractFieldsFromText(text);
+      const extracted = await aiExtractFieldsFromText(text, { smartFill: true });
       applyImportedFields(extracted, { onlyEmpty: importOnlyEmpty() });
       renderPreview(readForm());
       setPasteNote("AI抽出してフォームに反映しました");
@@ -2427,20 +2945,25 @@ function init() {
       setImportNote("URLが空です");
       return;
     }
-    setImportNote("取得中…（失敗したら貼り付け抽出を使ってください）");
+    setImportNote("取得中…（複数経路でページを読み込みます）");
     try {
-      const res = await fetch(url, { method: "GET" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const html = await res.text();
-      const text = stripHtmlToText(html);
-      const extracted = extractFromText(text, { url });
+      const { text, html } = await fetchJobPageContent(url);
+      let extracted = runExtractionPipeline({ text, html, url, smartFill: true });
+      const filled = Object.values(extracted).filter((v) => String(v || "").trim()).length;
+      if (filled < 6 && getOpenAIApiKey()) {
+        try {
+          extracted = mergeExtracted(extracted, await aiExtractFieldsFromText(text, { smartFill: true }));
+        } catch {
+          /* AI補完は任意 */
+        }
+      }
       applyImportedFields(extracted, { onlyEmpty: importOnlyEmpty() });
       renderPreview(readForm());
-      setImportNote("抽出してフォームに反映しました");
-      setTimeout(() => setImportNote(""), 1800);
+      setImportNote(`抽出して反映しました（${Object.values(extracted).filter((v) => String(v || "").trim()).length}項目）`);
+      setTimeout(() => setImportNote(""), 2200);
     } catch (e) {
-      setImportNote("URL取得に失敗しました。ログイン/CORSの可能性があります（貼り付け抽出を使用してください）。");
-      setTimeout(() => setImportNote(""), 3500);
+      setImportNote("URL取得に失敗しました。ページ本文を貼り付けて「抽出」を使ってください。");
+      setTimeout(() => setImportNote(""), 4000);
     }
   });
 
@@ -2532,6 +3055,7 @@ function init() {
     }
   }
 
+  initSelectionUi();
   renderHistory();
   renderPreview(readForm());
 }
